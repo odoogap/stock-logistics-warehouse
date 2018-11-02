@@ -1,11 +1,7 @@
 # Copyright 2014 Numérigraphe SARL
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl.html).
-
 from collections import Counter
-
 from odoo import models, fields, api
-from odoo.addons import decimal_precision as dp
-
 from odoo.exceptions import AccessError, UserError
 
 
@@ -13,11 +9,17 @@ class ProductProduct(models.Model):
     _inherit = 'product.product'
 
     # Needed for fields dependencies
-    # When self.potential_qty is compute, we want to force the ORM
-    # to compute all the components potential_qty too.
+    # As self.potential_qty is computed, we want to force the ORM to compute
+    # the potential_qty of all the components of the actual product first.
+    # Although component_ids isn't stored,
+    # is never accessed and isn't actually computed, we need this field
+    # to ensure the dependency chain of _compute_potential_qty is correct.
+    # with the field potential_qty being marked as recursive.
+    # (cf setup_triggers
+    # https://github.com/odoo/odoo/blob/11.0/odoo/fields.py#L684)
     component_ids = fields.Many2many(
         comodel_name='product.product',
-        compute='_get_component_ids',
+        compute='_compute_component_ids',
     )
 
     @api.multi
@@ -25,14 +27,12 @@ class ProductProduct(models.Model):
         """Add the potential quantity to the quantity available to promise.
 
         This is the same implementation as for templates."""
-        res = {}
+        res = super()._compute_available_quantities_dict()
         for product in self:
-            potential_qty = self._get_potential_qty(product)
-            res[product.id] = {
-                'immediately_usable_qty': product.virtual_available +
-                potential_qty,
-                'potential_qty': potential_qty
-            }
+            potential_qty = product._get_potential_qty()
+            res[product.id]['immediately_usable_qty'] = \
+                product.virtual_available + potential_qty
+            res[product.id]['potential_qty'] = potential_qty
         return res
 
     @api.multi
@@ -42,23 +42,25 @@ class ProductProduct(models.Model):
     def _compute_available_quantities(self):
         super()._compute_available_quantities()
 
-    def _get_potential_qty(self, product):
+    @api.multi
+    def _get_potential_qty(self):
         """Compute the potential qty based on the available components."""
+        self.ensure_one()
         bom_obj = self.env['mrp.bom']
-        bom = bom_obj._bom_find(product=product)
+        bom = bom_obj._bom_find(product=self)
         if not bom:
             return 0.0
 
         # Need by product (same product can be in many BOM lines/levels)
         try:
-            component_needs = self._get_components_needs(product, bom)
+            component_needs = self._get_components_needs(self, bom)
         except AccessError:
             # If user doesn't have access to BOM
             # he can't see potential_qty
             component_needs = None
         if not component_needs:
             # The BoM has no line we can use
-            product.potential_qty = 0.0
+            return 0.0
 
         else:
             # Find the lowest quantity we can make with the stock at hand
@@ -114,14 +116,16 @@ class ProductProduct(models.Model):
 
         return needs
 
-    def _get_component_ids(self):
+    @api.multi
+    def _compute_component_ids(self):
         """ Compute component_ids by getting all the components for
         this product.
         """
         bom_obj = self.env['mrp.bom']
-
-        bom_id = bom_obj._bom_find(product_id=self.id)
-        if bom_id:
-            bom = bom_obj.browse(bom_id)
-            for bom_component in bom_obj._bom_explode(bom, self, 1.0)[0]:
-                self.component_ids |= self.browse(bom_component['product_id'])
+        for product in self:
+            bom = bom_obj._bom_find(product=product)
+            if bom:
+                components = self.env['product.product']
+                for bom_component in bom.explode(product, 1.0)[1]:
+                    components |= bom_component[0]['product_id']
+                product.component_ids = components

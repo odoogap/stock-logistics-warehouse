@@ -10,13 +10,15 @@ class TestPotentialQty(TransactionCase):
 
     def setUp(self):
         super(TestPotentialQty, self).setUp()
-        self.product_model = self.env["product.product"]
+        self.product_model = self.env["product.product"].with_context(
+            tracking_disable=True
+        )
         self.bom_model = self.env["mrp.bom"]
         self.bom_line_model = self.env["mrp.bom.line"]
         self.stock_quant_model = self.env["stock.quant"]
         self.config = self.env['ir.config_parameter']
         self.location = self.env['stock.location']
-        # We need to compute parent_left and parent_right of the locations as 
+        # We need to compute parent_left and parent_right of the locations as
         # they are used to compute qty_available of the product.
         self.location._parent_store_compute()
         self.setup_demo_data()
@@ -51,7 +53,7 @@ class TestPotentialQty(TransactionCase):
         for component_id in (
                 component_ids + [v.id
                                  for v in self.tmpl.product_variant_ids]):
-            inventory = self.env['stock.inventory'].create(
+            self.env['stock.inventory'].create(
                 {'name': 'no components: %s' % component_id,
                  'location_id': self.ref('stock.stock_location_locations'),
                  'filter': 'product',
@@ -191,13 +193,14 @@ class TestPotentialQty(TransactionCase):
             test_user_tmpl, 1000.0, '')
 
     def test_group_mrp_missing(self):
-        test_user = self.env['res.users'].create({
-            'name': 'test_demo',
-            'login': 'test_demo',
-            'company_id': self.ref('base.main_company'),
-            'company_ids': [(4, self.ref('base.main_company'))],
-            'groups_id': [(4, self.ref('stock.group_stock_user'))],
-        })
+        test_user = self.env['res.users'].with_context(
+            tracking_disable=True, no_reset_password=True).create({
+                'name': 'test_demo',
+                'login': 'test_demo',
+                'company_id': self.ref('base.main_company'),
+                'company_ids': [(4, self.ref('base.main_company'))],
+                'groups_id': [(4, self.ref('stock.group_stock_user'))],
+            })
 
         p1 = self.product_model.create({'name': 'Test P1', 'type': 'product'})
         p2 = self.product_model.create({'name': 'Test P2', 'type': 'product'})
@@ -309,27 +312,22 @@ class TestPotentialQty(TransactionCase):
 
     def test_multi_unit_recursive_bom(self):
         # Test multi-level and multi-units BOM
-
         p1 = self.product_model.create({
             'name': 'Test product with BOM',
             'type': 'product'
         })
-
         p2 = self.product_model.create({
             'name': 'Test sub product with BOM',
             'type': 'product'
         })
-
         p3 = self.product_model.create({
             'name': 'Test component',
             'type': 'product'
         })
-
         bom_p1 = self.bom_model.create({
             'product_tmpl_id': p1.product_tmpl_id.id,
             'product_id': p1.id,
         })
-
         # 1 dozen of component
         self.bom_line_model.create({
             'bom_id': bom_p1.id,
@@ -337,7 +335,6 @@ class TestPotentialQty(TransactionCase):
             'product_qty': 1,
             'product_uom_id': self.ref('product.product_uom_dozen'),
         })
-
         # Two p2 which have a bom
         self.bom_line_model.create({
             'bom_id': bom_p1.id,
@@ -345,13 +342,11 @@ class TestPotentialQty(TransactionCase):
             'product_qty': 2,
             'product_uom_id': self.ref('product.product_uom_unit'),
         })
-
         bom_p2 = self.bom_model.create({
             'product_tmpl_id': p2.product_tmpl_id.id,
             'product_id': p2.id,
             'type': 'phantom',
         })
-
         # p2 need 2 unit of component
         self.bom_line_model.create({
             'bom_id': bom_p2.id,
@@ -359,14 +354,11 @@ class TestPotentialQty(TransactionCase):
             'product_qty': 2,
             'product_uom_id': self.ref('product.product_uom_unit'),
         })
-
         p1.invalidate_cache()
-
         # Need a least 1 dozen + 2 * 2 = 16 units for one P1
         self.assertEqual(0, p1.potential_qty)
 
         self.create_inventory(p3.id, 1)
-
         p1.invalidate_cache()
         self.assertEqual(0, p1.potential_qty)
 
@@ -392,12 +384,10 @@ class TestPotentialQty(TransactionCase):
             'name': 'Test product with BOM',
             'type': 'product'
         })
-
         p2 = self.product_model.create({
             'name': 'Test sub product with BOM',
             'type': 'product'
         })
-
         p3 = self.product_model.create({
             'name': 'Test component',
             'type': 'product'
@@ -410,7 +400,6 @@ class TestPotentialQty(TransactionCase):
             'product_qty': 2,
             'product_uom_id': self.ref('product.product_uom_dozen'),
         })
-
         # Need 5 p2 for that
         self.bom_line_model.create({
             'bom_id': bom_p1.id,
@@ -469,7 +458,6 @@ class TestPotentialQty(TransactionCase):
             'product_qty': 1,
             'product_uom': self.ref('product.product_uom_unit'),
         })
-
         # Need 1 iMac for that
         self.bom_line_model.create({
             'bom_id': bom_p1.id,
@@ -477,7 +465,6 @@ class TestPotentialQty(TransactionCase):
             'product_qty': 1,
             'product_uom': self.ref('product.product_uom_unit'),
         })
-
         # Default component is qty_available
         p1.invalidate_cache()
         self.assertEqual(3.0, p1.potential_qty)
@@ -496,7 +483,6 @@ class TestPotentialQty(TransactionCase):
 
         })
         self.create_inventory(imac_component.id, 5)
-
         imac_bom = self.bom_model.create({
             'product_tmpl_id': imac.product_tmpl_id.id,
             'product_id': imac.id,
@@ -504,7 +490,6 @@ class TestPotentialQty(TransactionCase):
             'product_uom': self.ref('product.product_uom_unit'),
             'type': 'phantom',
         })
-
         # Need 1 imac_component for iMac
         self.bom_line_model.create({
             'bom_id': imac_bom.id,
@@ -512,7 +497,6 @@ class TestPotentialQty(TransactionCase):
             'product_qty': 1,
             'product_uom': self.ref('product.product_uom_unit'),
         })
-
         p1.invalidate_cache()
         self.assertEqual(5.0, p1.potential_qty)
 
@@ -538,11 +522,8 @@ class TestPotentialQty(TransactionCase):
         self.create_simple_bom(p1, p2)
         # P2 need one P3
         self.create_simple_bom(p2, p3)
-
         self.create_inventory(p3.id, 3)
-
         self.product_model.invalidate_cache()
-
         products = self.product_model.search(
             [('id', 'in', [p1.id, p2.id, p3.id])]
         )
